@@ -61,9 +61,20 @@ async def init_db():
                 longitude REAL,
                 is_active INTEGER DEFAULT 1,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                price_per_day REAL,
+                channel_tag TEXT
             )
         ''')
+        # Автоматическая миграция для существующих баз данных
+        try:
+            await db.execute('ALTER TABLE properties ADD COLUMN price_per_day REAL;')
+        except Exception:
+            pass
+        try:
+            await db.execute('ALTER TABLE properties ADD COLUMN channel_tag TEXT;')
+        except Exception:
+            pass
 
         # Таблица клиентов
         await db.execute('''

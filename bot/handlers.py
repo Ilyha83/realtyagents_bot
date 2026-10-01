@@ -1125,6 +1125,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+def format_property_for_manager(p: dict) -> str:
+    """Формирует понятное риелтору описание объекта с его реальным номером в канале и ссылкой на пост."""
+    if not p:
+        return ""
+    title = p.get('title') or "Объект недвижимости"
+    price = p.get('price')
+    curr = p.get('currency', 'GBP')
+    curr_sym = '€' if curr == 'EUR' else ('£' if curr == 'GBP' else '$')
+    ppd = p.get('price_per_day')
+    if p.get('listing_type') == 'rent':
+        price_str = f"{ppd:,.0f} {curr_sym}/сутки" if ppd else (f"{price:,.0f} {curr_sym}/мес" if price else "По запросу")
+    else:
+        price_str = f"{curr_sym}{price:,.0f}" if price else "По запросу"
+
+    tag = p.get('channel_tag')
+    tag_str = f" <b>[{tag}]</b>" if tag else ""
+
+    url = p.get('source_url')
+    if url:
+        link_label = f"открыть {tag}" if tag else "открыть в канале"
+        link_str = f' — <a href="{url}">{link_label}</a>'
+    else:
+        link_str = ""
+
+    return f"• <b>{html.escape(title)}</b>{tag_str} ({price_str}){link_str}"
+
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кликов по inline-кнопкам."""
@@ -1322,6 +1348,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data.startswith("viewing_"):
         prop_id_str = data.split("viewing_")[1]
+        p = None
         try:
             prop_id = int(prop_id_str)
             p = await get_property_by_id(prop_id)
@@ -1337,14 +1364,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Уведомляем старшего риелтора
         try:
+            tag = p.get('channel_tag') if p else None
+            tag_line = f"\n• <b>Номер в канале:</b> <code>{tag}</code>" if tag else ""
+            url = p.get('source_url', '') if p else ''
+            url_line = f"\n• <b>Ссылка на пост:</b> <a href=\"{url}\">{url}</a>" if url else ""
+
             username_str = f" (@{user.username})" if user.username else ""
             alert_text = (
                 f"🏠 <b>Запрос на просмотр объекта!</b>\n\n"
-                f"• <b>Клиент</b>: {user.full_name or 'Не указано'}{username_str}\n"
+                f"• <b>Клиент</b>: {html.escape(user.full_name or 'Не указано')}{username_str}\n"
                 f"• <b>ID клиента</b>: <code>{user.id}</code>\n"
-                f"• <b>Объект</b>: <b>{title}</b> (ID: #{prop_id_str})\n"
+                f"• <b>Объект</b>: <b>{html.escape(title)}</b>"
+                f"{tag_line}\n"
                 f"• <b>Локация</b>: {loc}\n"
-                f"• <b>Цена</b>: {price_str}\n"
+                f"• <b>Цена</b>: {price_str}"
+                f"{url_line}\n"
             )
             await notify_managers(context.bot, alert_text)
         except Exception as e:
@@ -1418,18 +1452,29 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 p_price = p.get('price', 0)
                 p_curr = p.get('currency', 'GBP')
                 p_price_str = f"£{p_price:,.0f}" if p_curr == 'GBP' else f"{p_price:,.0f} {p_curr}"
+                tag = p.get('channel_tag')
+                tag_line = f"\n• <b>Номер в канале:</b> <code>{tag}</code>" if tag else ""
+                url = p.get('source_url', '')
+                url_line = f"\n• <b>Ссылка на пост:</b> <a href=\"{url}\">{url}</a>" if url else ""
                 prop_block = (
                     f"🏠 <b>Конкретный объект интереса:</b>\n"
-                    f"• <b>Название:</b> {html.escape(p_title)}\n"
-                    f"• <b>ID:</b> #{prop_id_str}\n"
+                    f"• <b>Название:</b> {html.escape(p_title)}"
+                    f"{tag_line}\n"
                     f"• <b>Локация:</b> {html.escape(p_city)}\n"
-                    f"• <b>Цена:</b> {p_price_str}\n\n"
+                    f"• <b>Цена:</b> {p_price_str}"
+                    f"{url_line}\n\n"
                 )
 
         selected_ids = get_user_search_results(user.id, client_data)
         offers_block = ""
         if selected_ids and not prop_block:
-            offers_block = f"🔍 <b>Объекты в текущей подборке:</b> #{', #'.join(str(i) for i in selected_ids[:4])}\n\n"
+            offers_lines = []
+            for pid in selected_ids[:4]:
+                p_item = await get_property_by_id(pid)
+                if p_item:
+                    offers_lines.append(format_property_for_manager(p_item))
+            if offers_lines:
+                offers_block = "🔍 <b>Объекты в текущей подборке:</b>\n" + "\n".join(offers_lines) + "\n\n"
 
         username_str = f" (@{user.username})" if user.username else ""
         phone_str = f"\n• <b>Телефон:</b> <code>{client_data.get('phone')}</code>" if client_data.get('phone') else ""
