@@ -94,7 +94,7 @@ flowchart TD
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/<your-username>/realtyagents_bot.git
+git clone https://github.com/Ilyha83/realtyagents_bot.git
 cd realtyagents_bot
 ```
 
