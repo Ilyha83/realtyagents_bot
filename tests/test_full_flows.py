@@ -142,6 +142,69 @@ def test_keyboards_layout():
     print("  ✅ Кнопки сформированы правильно, связь с менеджером передает callback_data для квалификации!")
 
 
+def test_bare_digit_qualification_vs_selection():
+    """Тест 6: Голая цифра '1' во время квалификации не должна перехватываться как карточка объекта."""
+    print("▶ Тест 6: Изоляция цифры '1' (ответ на вопрос о гостях vs выбор карточки)...")
+    
+    # Сценарий А: Клиент отвечает на вопрос о числе гостей ("1") при наличии старого кэша в notes
+    client = {
+        'id': 1,
+        'telegram_id': 999,
+        'listing_type': 'rent',
+        'preferred_type': 'квартира',
+        'booking_start_date': '2026-10-10',
+        'booking_end_date': '2026-10-20',
+        'bedrooms_min': None,
+        'preferred_city': None,
+        'budget_max': None,
+        'notes': '{"last_search": [157]}'
+    }
+    
+    step_before, _ = get_next_qualification_question(client)
+    is_qualifying = (step_before is not None)
+    assert is_qualifying is True, "Клиент должен находиться в процессе квалификации"
+    
+    # Симулируем логику отбора карточки из handlers.py
+    user_text = "1"
+    clean_low = user_text.lower().strip()
+    target_idx = None
+    m_explicit = re.match(r'^(?:(?:вариант|объект|номер|вар\.?|№|#)\s*)([1-9])(?:\s*(?:подробнее|покажи|открой))?$', clean_low)
+    if m_explicit:
+        target_idx = int(m_explicit.group(1))
+    elif not is_qualifying:
+        if clean_low in ["первый", "1-й", "1й"]:
+            target_idx = 1
+        elif re.match(r'^[1-9]$', clean_low):
+            target_idx = int(clean_low)
+            
+    assert target_idx is None, f"ОШИБКА: цифра '1' была ошибочно перехвачена как выбор карточки #{target_idx}!"
+
+    # Сценарий Б: Клиент уже квалифицирован и получил подборку [101, 102], тогда '1' должна выбирать объект 101
+    client_qualified = {
+        'id': 1,
+        'telegram_id': 999,
+        'listing_type': 'rent',
+        'preferred_type': 'квартира',
+        'booking_start_date': '2026-10-10',
+        'booking_end_date': '2026-10-20',
+        'bedrooms_min': 1,
+        'preferred_city': 'Кирения',
+        'budget_max': 60.0,
+        'notes': '{"last_search": [101, 102]}'
+    }
+    step_before_q, _ = get_next_qualification_question(client_qualified)
+    is_qualifying_q = (step_before_q is not None)
+    assert is_qualifying_q is False, "Квалификация должна быть завершена"
+
+    target_idx_q = None
+    if not is_qualifying_q:
+        if re.match(r'^[1-9]$', clean_low):
+            target_idx_q = int(clean_low)
+
+    assert target_idx_q == 1, "После завершения поиска цифра '1' должна выбирать 1-й вариант из подборки"
+    print("  ✅ Цифра '1' безошибочно разделяется: в анкете — это гость/спальня, после поиска — выбор объекта!")
+
+
 def run_all_tests():
     print("=" * 60)
     print("🚀 ЗАПУСК ПОЛНОГО РЕГРЕССИОННОГО ТЕСТИРОВАНИЯ СИСТЕМЫ")
@@ -151,10 +214,12 @@ def run_all_tests():
     test_rent_qualification_flow()
     test_clean_property_description()
     test_keyboards_layout()
+    test_bare_digit_qualification_vs_selection()
     print("=" * 60)
-    print("🎉 ВСЕ 5 РЕГРЕССИОННЫХ ТЕСТОВ ПРОЙДЕНЫ УСПЕШНО!")
+    print("🎉 ВСЕ 6 РЕГРЕССИОННЫХ ТЕСТОВ ПРОЙДЕНЫ УСПЕШНО!")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     run_all_tests()
+

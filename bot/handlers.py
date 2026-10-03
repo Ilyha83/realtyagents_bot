@@ -540,45 +540,60 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Обработка выбора объекта (цифра или фразы "можно подробнее?", "подробнее", "покажи", "расскажи")
-    clean_text = user_text.strip().lower()
+    # Обработка выбора объекта из показанной подборки
+    clean_low = user_text.lower().strip()
+    step_before, _ = get_next_qualification_question(client)
+    is_qualifying = (step_before is not None)
+
     target_idx = None
-
-    # Если клиент в процессе квалификации (еще не собраны ключевые данные),
-    # одиночные цифры ("1", "2") — это ответы на вопросы анкеты (число гостей/спален), а не выбор карточки!
-    is_qualifying = (
-        not client.get('listing_type') or
-        (client.get('listing_type') == 'rent' and (not client.get('booking_start_date') or client.get('bedrooms_min') is None)) or
-        (client.get('listing_type') == 'sale' and (not client.get('preferred_type') or client.get('bedrooms_min') is None))
-    )
-
-    if not is_qualifying:
-        if clean_text.isdigit():
-            target_idx = int(clean_text)
-        elif user.id in LAST_SEARCH_RESULTS and LAST_SEARCH_RESULTS[user.id]:
-            detail_triggers = ["подробн", "описани", "покажи", "расскажи", "детали", "фото", "первый", "второй", "третий"]
-            if any(t in clean_text for t in detail_triggers):
-                if "втор" in clean_text or "2" in clean_text:
+    # Явные команды выбора варианта ("вариант 1", "объект 2", "№3", "#1")
+    m_explicit = re.match(r'^(?:(?:вариант|объект|номер|вар\.?|№|#)\s*)([1-9])(?:\s*(?:подробнее|покажи|открой))?$', clean_low)
+    if m_explicit:
+        target_idx = int(m_explicit.group(1))
+    elif not is_qualifying:
+        # Только если клиент НЕ отвечает на вопросы анкеты квалификации:
+        if clean_low in ["первый", "1-й", "1й"]:
+            target_idx = 1
+        elif clean_low in ["второй", "2-й", "2й"]:
+            target_idx = 2
+        elif clean_low in ["третий", "3-й", "3й"]:
+            target_idx = 3
+        elif clean_low in ["четвертый", "четвёртый", "4-й", "4й"]:
+            target_idx = 4
+        elif re.match(r'^[1-9]$', clean_low):
+            target_idx = int(clean_low)
+        else:
+            detail_triggers = ["подробн", "описани", "покажи", "расскажи", "детали", "фото"]
+            if any(t in clean_low for t in detail_triggers):
+                m_num = re.search(r'\b([1-9])\b', clean_low)
+                if m_num:
+                    target_idx = int(m_num.group(1))
+                elif "втор" in clean_low:
                     target_idx = 2
-                elif "трет" in clean_text or "3" in clean_text:
+                elif "трет" in clean_low:
                     target_idx = 3
+                elif "четверт" in clean_low:
+                    target_idx = 4
                 else:
                     target_idx = 1
 
-    if target_idx is not None and user.id in LAST_SEARCH_RESULTS:
-        if 0 < target_idx <= len(LAST_SEARCH_RESULTS[user.id]):
-            prop_id = LAST_SEARCH_RESULTS[user.id][target_idx - 1]
-            LAST_VIEWED[user.id] = prop_id
-            
-            p = await get_property_by_id(prop_id)
-            if p:
-                await send_property_card(
-                    update.message,
-                    p,
-                    reply_markup=get_property_card_keyboard(prop_id),
-                    context=context
-                )
-                return
+    # Проверяем наличие подборки: в памяти текущей сессии или (вне квалификации) в базе
+    search_ids = LAST_SEARCH_RESULTS.get(user.id)
+    if not search_ids and not is_qualifying:
+        search_ids = get_user_search_results(user.id, client)
+
+    if target_idx and search_ids and 1 <= target_idx <= len(search_ids):
+        target_pid = search_ids[target_idx - 1]
+        p = await get_property_by_id(target_pid)
+        if p:
+            LAST_VIEWED[user.id] = target_pid
+            await send_property_card(
+                update.message,
+                p,
+                reply_markup=get_property_card_keyboard(target_pid),
+                context=context
+            )
+            return
 
     # 2. Обработка отправки номера телефона
     clean_digits = re.sub(r'[^\d+]', '', user_text)
@@ -678,36 +693,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Пожалуйста! Всегда рад помочь. Обращайтесь в любое время! 😊", parse_mode="Markdown")
         return
-
-    # 4.5. Перехват выбора объекта по номеру из ранее показанной подборки ("1", "2", "3", "4", "вариант 4" и т.д.)
-    raw_user_num = None
-    clean_low = user_text.lower().strip()
-    m_var = re.match(r'^(?:(?:вариант|объект|номер|вар\.?|№|#)\s*)?([1-9])(?:\s*(?:подробнее|покажи|открой|вариант))?$', clean_low)
-    if m_var:
-        raw_user_num = int(m_var.group(1))
-    elif clean_low in ["первый", "1-й", "1й"]:
-        raw_user_num = 1
-    elif clean_low in ["второй", "2-й", "2й"]:
-        raw_user_num = 2
-    elif clean_low in ["третий", "3-й", "3й"]:
-        raw_user_num = 3
-    elif clean_low in ["четвертый", "четвёртый", "4-й", "4й"]:
-        raw_user_num = 4
-
-    cached_ids = get_user_search_results(user.id, client)
-    if cached_ids and raw_user_num and 1 <= raw_user_num <= len(cached_ids):
-        target_pid = cached_ids[raw_user_num - 1]
-        p = await get_property_by_id(target_pid)
-        if p:
-            LAST_VIEWED[user.id] = target_pid
-            await send_property_card(
-                update.message,
-                p,
-                reply_markup=get_property_card_keyboard(target_pid),
-                context=context
-            )
-            return
-
     # 5. Роутинг через Координатор
     status_msg = None
 
@@ -880,6 +865,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Сброс старых параметров предыдущей сессии при новом запросе или при переходе от шага сделки
         if is_fresh_inquiry or step_before == "listing_type":
+            if user.id in LAST_SEARCH_RESULTS:
+                del LAST_SEARCH_RESULTS[user.id]
+            update_data["notes"] = json.dumps({"last_search": []})
+            client["notes"] = json.dumps({"last_search": []})
             if not params.get("booking_start_date") and not any(sdt in text_low for sdt in same_dates_triggers):
                 update_data["booking_start_date"] = None
                 update_data["booking_end_date"] = None
@@ -911,6 +900,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     update_data["preferred_type"] = None
                 update_data["budget_max"] = None
                 update_data["budget_min"] = None
+                if user.id in LAST_SEARCH_RESULTS:
+                    del LAST_SEARCH_RESULTS[user.id]
+                update_data["notes"] = json.dumps({"last_search": []})
+                client["notes"] = json.dumps({"last_search": []})
         if params.get("budget_min") is not None:
             update_data["budget_min"] = params["budget_min"]
         if params.get("budget_max") is not None:
@@ -1173,8 +1166,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             "listing_type": None,
             "booking_start_date": None,
             "booking_end_date": None,
-            "status": "new"
+            "status": "new",
+            "notes": json.dumps({"last_search": []})
         }
+        if user.id in LAST_SEARCH_RESULTS:
+            del LAST_SEARCH_RESULTS[user.id]
         if city == "all":
             await update_client(user.id, preferred_city=None, **reset_fields)
             await query.edit_message_text("Показаны все регионы. Теперь выберите тип недвижимости:", reply_markup=get_property_types_keyboard())
@@ -1194,8 +1190,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         prop_type = data.split("type_")[1]
         type_name = {"apartment": "квартира", "villa": "вилла", "penthouse": "пентхаус", "studio": "студия", "land": "участок"}.get(prop_type, prop_type)
 
-        # 1. Обновляем тип объекта в профиле клиента
-        await update_client(user.id, preferred_type=type_name if prop_type != "all" else None)
+        # 1. Обновляем тип объекта в профиле клиента и сбрасываем старую подборку
+        if user.id in LAST_SEARCH_RESULTS:
+            del LAST_SEARCH_RESULTS[user.id]
+        await update_client(user.id, preferred_type=type_name if prop_type != "all" else None, notes=json.dumps({"last_search": []}))
         client = await get_or_create_client(user.id)
 
         await query.edit_message_text("💬 _Лид-Менеджер обрабатывает параметры подбора..._", parse_mode="Markdown")
@@ -1212,7 +1210,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     elif data.startswith("deal_"):
         deal_type = data.split("deal_")[1]
         deal_name = "покупка" if deal_type == "sale" else "аренда"
-        await update_client(user.id, listing_type=deal_type)
+        if user.id in LAST_SEARCH_RESULTS:
+            del LAST_SEARCH_RESULTS[user.id]
+        await update_client(user.id, listing_type=deal_type, notes=json.dumps({"last_search": []}))
         client = await get_or_create_client(user.id)
 
         user_message = f"[Выбран тип сделки: {deal_name}]"
