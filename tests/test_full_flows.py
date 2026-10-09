@@ -17,7 +17,7 @@ import re
 sys.path.insert(0, '.')
 
 from agents.coordinator import classify_intent, parse_bedrooms
-from agents.lead_manager import get_next_qualification_question
+from agents.lead_manager import get_next_qualification_question, handle_lead
 from bot.handlers import clean_property_description, get_user_search_results, LAST_SEARCH_RESULTS
 from bot.keyboards import get_search_results_keyboard, get_property_card_keyboard
 
@@ -205,6 +205,44 @@ def test_bare_digit_qualification_vs_selection():
     print("  ✅ Цифра '1' безошибочно разделяется: в анкете — это гость/спальня, после поиска — выбор объекта!")
 
 
+def test_sale_qualification_flow():
+    """Тест 7: Шаги квалификации покупки недвижимости (тип -> город -> спальни -> бюджет)."""
+    print("▶ Тест 7: Цепочка квалификации покупки (3+1, бюджет)...")
+    client = {
+        'id': 1,
+        'telegram_id': 999,
+        'listing_type': 'sale',
+        'preferred_type': 'villa',
+        'preferred_city': 'Искеле',
+        'bedrooms_min': None,
+        'bedrooms_max': None,
+        'budget_min': None,
+        'budget_max': None
+    }
+
+    # Шаг 1: Вопрос о спальнях
+    step, q = get_next_qualification_question(client)
+    assert step == "bedrooms", f"Ожидался шаг 'bedrooms', получено '{step}'"
+    assert "Сколько спален" in q
+
+    # Пользователь отвечает '3+1'
+    client['bedrooms_min'] = 3
+    client['bedrooms_max'] = 3
+    resp = asyncio.run(handle_lead(999, "3+1", client))
+    assert "3+1" in resp
+    assert "бюджет" in resp.lower()
+
+    # Шаг 2: Вопрос о бюджете
+    step2, q2 = get_next_qualification_question(client)
+    assert step2 == "budget"
+
+    # Пользователь отвечает '250000'
+    client['budget_max'] = 250000.0
+    resp2 = asyncio.run(handle_lead(999, "250000", client))
+    assert "[READY]" in resp2
+    print("  ✅ Цепочка покупки работает строго: Тип -> Город -> Спальни (3+1) -> Бюджет -> Готово!")
+
+
 def run_all_tests():
     print("=" * 60)
     print("🚀 ЗАПУСК ПОЛНОГО РЕГРЕССИОННОГО ТЕСТИРОВАНИЯ СИСТЕМЫ")
@@ -215,11 +253,13 @@ def run_all_tests():
     test_clean_property_description()
     test_keyboards_layout()
     test_bare_digit_qualification_vs_selection()
+    test_sale_qualification_flow()
     print("=" * 60)
-    print("🎉 ВСЕ 6 РЕГРЕССИОННЫХ ТЕСТОВ ПРОЙДЕНЫ УСПЕШНО!")
+    print("🎉 ВСЕ 7 РЕГРЕССИОННЫХ ТЕСТОВ ПРОЙДЕНЫ УСПЕШНО!")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     run_all_tests()
+
 

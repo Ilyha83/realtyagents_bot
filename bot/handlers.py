@@ -8,6 +8,7 @@ import html
 import json
 import re
 import io
+import asyncio
 import urllib.request
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -475,6 +476,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text:
         return
     user = update.effective_user
+    clean_text = user_text.lower().strip()
+    clean_low = clean_text
 
     # 1. Получаем данные клиента из БД
     client = await get_or_create_client(telegram_id=user.id, name=user.full_name)
